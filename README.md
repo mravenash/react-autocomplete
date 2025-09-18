@@ -1,70 +1,119 @@
-# Getting Started with Create React App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+# Autocomplete App
 
-## Available Scripts
+Advanced, accessible React + TypeScript autocomplete component with debounced fetching, caching, retry, keyboard control, and theming.
 
-In the project directory, you can run:
+## Key Features
 
-### `npm start`
+- TypeScript + strict mode
+- Debounced remote fetching with AbortController
+- Lightweight in‑memory LRU style cache (size bounded)
+- Retry with incremental backoff (2 attempts)
+- Keyboard navigation (Arrow Up/Down, Home/End, Enter, Tab, Escape)
+- Accessible combobox pattern (aria-* attributes, live region announcements)
+- Highlighted substring matches via `<mark>`
+- Clear button, empty / error / loading states
+- Dark mode friendly styling (prefers-color-scheme)
+- Fully controlled via a reusable `useAutocomplete` hook
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Quick Start
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```sh
+npm install
+npm start
+```
+Visit: http://localhost:3000
 
-### `npm test`
+## Core Files
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+| File | Purpose |
+|------|---------|
+| `src/AutoComplete.tsx` | Autocomplete component (UI + accessibility) |
+| `src/useAutocomplete.ts` | Logic hook: debounce, fetch, cache, retry, highlighting state |
+| `src/AutoComplete.css` | Component styles (light/dark, animations, focus) |
+| `src/App.tsx` | Demo usage |
+| `src/App.test.tsx` | Basic render test |
 
-### `npm run build`
+## Component Props (`AutoComplete`)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `fetchFn` | `(query: string, opts?: { signal?: AbortSignal }) => Promise<string[]>` | Built‑in default API fetch | Async data source; must return an array |
+| `debounceMs` | `number` | `300` | Delay before firing fetch after input stops |
+| `minChars` | `number` | `1` | Minimum characters before querying |
+| `placeholder` | `string` | `"Type a word"` | Input placeholder text |
+| `onSelect` | `(value: string) => void` | `undefined` | Callback when a suggestion is chosen |
+| `maxResultsNote` | `boolean` | `true` | Show footer line with result count |
+| `highlightMatch` | `boolean` | `true` | Wrap matching substring in `<mark>` |
+| `clearable` | `boolean` | `true` | Show clear (×) button when there is input |
+| `id` | `string` | `"autocomplete"` | Base id for ARIA attributes |
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Hook API (`useAutocomplete`)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```ts
+const { state, actions } = useAutocomplete({
+	fetchFn,          // required
+	debounceMs: 300,
+	minChars: 1,
+	maxCache: 50,
+});
 
-### `npm run eject`
+state: {
+	input: string;
+	query: string;
+	suggestions: string[];
+	loading: boolean;
+	error: string | null;
+	highlight: number;      // index of highlighted suggestion
+	noResults: boolean;
+}
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+actions: {
+	updateInput(val: string): void;
+	clear(): void;
+	moveHighlight(delta: number): void;
+	setHighlightIndex(idx: number): void;
+	setSuggestions(s: string[]): void; // rarely needed externally
+}
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## Accessibility Notes
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+- Uses wrapper `role="combobox"` with `aria-haspopup="listbox"` and dynamic `aria-expanded`.
+- Input uses `aria-activedescendant` to link highlighted suggestion.
+- Results list uses `role="listbox"` / `role="option"` semantics.
+- Live region announces loading / counts / empty state.
+- Escape key behavior: first closes list, second clears input.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+## Theming
 
-## Learn More
+Relies on CSS variables and `prefers-color-scheme: dark`; customize by overriding selectors in `AutoComplete.css`.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Example Custom Fetch
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```ts
+const myFetch = async (q: string, { signal }: { signal?: AbortSignal } = {}) => {
+	const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal });
+	if (!res.ok) throw new Error('Network');
+	return res.json(); // must be an array
+};
 
-### Code Splitting
+<AutoComplete fetchFn={myFetch} minChars={2} onSelect={(v) => console.log(v)} />
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## Testing
 
-### Analyzing the Bundle Size
+Run the test suite:
+```sh
+npm test -- --watchAll=false
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+## Production Build
 
-### Making a Progressive Web App
+```sh
+npm run build
+```
+Outputs optimized assets to `build/`.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## License
+MIT
