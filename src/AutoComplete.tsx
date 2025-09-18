@@ -1,14 +1,33 @@
 import React from 'react';
 import { useAutocomplete } from './useAutocomplete';
+import { DEFAULT_CONFIG, DEFAULT_UI, DEFAULT_API, ARIA_ATTRIBUTES, CSS_CLASSES } from './constants';
 
 const defaultFetch = async (q: string, { signal }: { signal?: AbortSignal } = {}) => {
-  const res = await fetch(`https://autocomplete-lyart.vercel.app/api/words?query=${encodeURIComponent(q)}&limit=5`, { signal });
+  const res = await fetch(`${DEFAULT_API.ENDPOINT}?query=${encodeURIComponent(q)}&limit=${DEFAULT_API.RESULT_LIMIT}`, { signal });
   if (!res.ok) throw new Error('Network');
+  return res.json();
+};
+
+const defaultSelectionFetch = async (selectedValue: string, { signal }: { signal?: AbortSignal } = {}) => {
+  // Demo implementation - in production, replace with your actual selection API
+  const res = await fetch(`${DEFAULT_API.SELECTION_ENDPOINT}?selected=${encodeURIComponent(selectedValue)}&limit=${DEFAULT_API.RESULT_LIMIT}`, { signal });
+  if (!res.ok) {
+    // Fallback to demo data for development
+    console.log(`Selection API called with: ${selectedValue}`);
+    return [
+      `${selectedValue} related 1`,
+      `${selectedValue} related 2`,
+      `${selectedValue} variant`,
+      `${selectedValue} alternative`,
+      `${selectedValue} suggestion`
+    ];
+  }
   return res.json();
 };
 
 interface AutoCompleteProps {
   fetchFn?: typeof defaultFetch;
+  selectionFn?: typeof defaultSelectionFetch;
   debounceMs?: number;
   minChars?: number;
   placeholder?: string;
@@ -27,29 +46,33 @@ export interface AutocompleteHandle {
 
 const Autocomplete = React.forwardRef<AutocompleteHandle, AutoCompleteProps>(({
   fetchFn = defaultFetch,
-  debounceMs = 300,
-  minChars = 1,
-  placeholder = 'Type a word',
+  selectionFn = defaultSelectionFetch,
+  debounceMs = DEFAULT_CONFIG.DEBOUNCE_MS,
+  minChars = DEFAULT_CONFIG.MIN_CHARS,
+  placeholder = DEFAULT_UI.PLACEHOLDER,
   onSelect,
   maxResultsNote = true,
   highlightMatch = true,
   clearable = true,
-  id = 'autocomplete',
+  id = DEFAULT_UI.COMPONENT_ID,
 }, ref) => {
-  const { state, actions } = useAutocomplete({ fetchFn, debounceMs, minChars });
+  const { state, actions } = useAutocomplete({ fetchFn, selectionFn, debounceMs, minChars });
   const { input, suggestions, loading, error, highlight, noResults } = state;
-  const { updateInput, clear, moveHighlight, setHighlightIndex, setSuggestions } = actions;
+  const { updateInput, clear, moveHighlight, setHighlightIndex, setSuggestions, handleSelection } = actions;
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const listRef = React.useRef<HTMLUListElement | null>(null);
   const liveRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const handleSelect = React.useCallback((word: string) => {
+  const handleSelect = React.useCallback(async (word: string) => {
     updateInput(word);
     setSuggestions([]);
     if (onSelect) onSelect(word);
-  }, [onSelect, setSuggestions, updateInput]);
+    
+    // Call selection API to get related suggestions
+    await handleSelection(word);
+  }, [onSelect, setSuggestions, updateInput, handleSelection]);
 
   React.useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -62,14 +85,18 @@ const Autocomplete = React.forwardRef<AutocompleteHandle, AutoCompleteProps>(({
     return () => document.removeEventListener('mousedown', handler);
   }, [setHighlightIndex, setSuggestions]);
 
+  // Debounced live region announcements to reduce verbosity while typing fast
   React.useEffect(() => {
     if (!liveRef.current) return;
-    let msg = '';
-    if (loading) msg = 'Loading suggestions';
-    else if (error) msg = 'Error loading suggestions';
-    else if (noResults) msg = 'No suggestions';
-    else if (suggestions.length) msg = `${suggestions.length} suggestion${suggestions.length>1?'s':''} available.`;
-    liveRef.current.textContent = msg;
+    const id = window.setTimeout(() => {
+      let msg = '';
+      if (loading) msg = 'Loading suggestions';
+      else if (error) msg = 'Error loading suggestions';
+      else if (noResults) msg = 'No suggestions';
+      else if (suggestions.length) msg = `${suggestions.length} suggestion${suggestions.length>1?'s':''} available.`;
+      liveRef.current!.textContent = msg;
+    }, DEFAULT_CONFIG.LIVE_REGION_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
   }, [loading, error, noResults, suggestions]);
 
   const scrollToItem = React.useCallback((idxParam?: number) => {
@@ -84,7 +111,10 @@ const Autocomplete = React.forwardRef<AutocompleteHandle, AutoCompleteProps>(({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') { moveHighlight(1); e.preventDefault(); scrollToItem(); }
     else if (e.key === 'ArrowUp') { moveHighlight(-1); e.preventDefault(); scrollToItem(); }
-    else if ((e.key === 'Enter' || e.key === 'Tab') && highlight >= 0 && suggestions[highlight]) { handleSelect(suggestions[highlight] as string); e.preventDefault(); }
+    else if (e.key === 'Enter' && highlight >= 0 && suggestions[highlight]) { handleSelect(suggestions[highlight] as string); e.preventDefault(); }
+    else if (e.key === 'Tab' && highlight >= 0 && suggestions[highlight]) {
+      handleSelect(suggestions[highlight] as string);
+    }
     else if (e.key === 'Home') { setHighlightIndex(0); scrollToItem(0); e.preventDefault(); }
     else if (e.key === 'End') { setHighlightIndex(suggestions.length -1); scrollToItem(suggestions.length -1); e.preventDefault(); }
     else if (e.key === 'Escape') {
@@ -111,51 +141,51 @@ const Autocomplete = React.forwardRef<AutocompleteHandle, AutoCompleteProps>(({
   };
 
   return (
-    <div className="autocomplete" ref={wrapperRef}>
-      <div className="ac-input-wrapper" role="combobox" aria-haspopup="listbox" aria-owns={`${id}-list`} aria-expanded={suggestions.length > 0} aria-controls={`${id}-list`}>
+    <div className={CSS_CLASSES.AUTOCOMPLETE} ref={wrapperRef}>
+      <div className={CSS_CLASSES.INPUT_WRAPPER} role={ARIA_ATTRIBUTES.ROLE_COMBOBOX} aria-haspopup={ARIA_ATTRIBUTES.HASPOPUP} aria-expanded={suggestions.length > 0} aria-controls={`${id}-list`}>
         <input
           ref={inputRef}
           value={input}
           onChange={(e) => updateInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          aria-autocomplete="list"
-          /* aria-expanded moved to combobox wrapper */
+          aria-autocomplete={ARIA_ATTRIBUTES.AUTOCOMPLETE}
           aria-activedescendant={highlight >= 0 ? `${id}-item-${highlight}` : undefined}
-          className="autocomplete-input"
+          className={CSS_CLASSES.INPUT}
         />
         {clearable && input && (
           <button
             type="button"
-            className="ac-clear-btn"
+            className={CSS_CLASSES.CLEAR_BUTTON}
             aria-label="Clear input"
+            onMouseDown={(e) => { e.preventDefault(); }}
             onClick={() => clear()}
           >×</button>
         )}
       </div>
-      <div className="visually-hidden" aria-live="polite" ref={liveRef} />
-      {loading && <div className="status" aria-live="polite">Loading...</div>}
-      {error && <div className="status error" aria-live="polite">{error}</div>}
+      <div className={CSS_CLASSES.VISUALLY_HIDDEN} aria-live={ARIA_ATTRIBUTES.LIVE_POLITE} ref={liveRef} />
+      {loading && <div className={`${CSS_CLASSES.STATUS}`} aria-live={ARIA_ATTRIBUTES.LIVE_POLITE}>Loading...</div>}
+      {error && <div className={`${CSS_CLASSES.STATUS} ${CSS_CLASSES.ERROR}`} aria-live={ARIA_ATTRIBUTES.LIVE_POLITE}>{error}</div>}
       {noResults && !loading && !error && input && (
-        <div className="status" aria-live="polite">No suggestions found</div>
+        <div className={CSS_CLASSES.STATUS} aria-live={ARIA_ATTRIBUTES.LIVE_POLITE}>No suggestions found</div>
       )}
       {suggestions.length > 0 && !loading && (
-        <ul id={`${id}-list`} role="listbox" className="suggestions" ref={listRef}>
+        <ul id={`${id}-list`} role={ARIA_ATTRIBUTES.ROLE_LISTBOX} className={CSS_CLASSES.SUGGESTIONS} ref={listRef}>
           {suggestions.map((word, idx) => (
             <li
               key={word as string}
               id={`${id}-item-${idx}`}
-              role="option"
+              role={ARIA_ATTRIBUTES.ROLE_OPTION}
               aria-selected={idx === highlight}
-              onMouseDown={() => handleSelect(word as string)}
+              onMouseDown={(e) => { e.preventDefault(); handleSelect(word as string); }}
               onMouseEnter={() => setHighlightIndex(idx)}
-              className={`suggestion-item ${idx === highlight ? 'highlight' : ''}`}
+              className={`${CSS_CLASSES.SUGGESTION_ITEM} ${idx === highlight ? CSS_CLASSES.HIGHLIGHT : ''}`}
             >
               {renderWord(word as string)}
             </li>
           ))}
           {maxResultsNote && (
-            <li className="suggestion-footer" aria-hidden="true">Showing {suggestions.length} results</li>
+            <li className={CSS_CLASSES.SUGGESTION_FOOTER} aria-hidden="true">Showing {suggestions.length} results</li>
           )}
         </ul>
       )}
@@ -163,6 +193,6 @@ const Autocomplete = React.forwardRef<AutocompleteHandle, AutoCompleteProps>(({
   );
 });
 
-Autocomplete.displayName = 'Autocomplete';
+Autocomplete.displayName = DEFAULT_UI.DISPLAY_NAME;
 
 export default Autocomplete;

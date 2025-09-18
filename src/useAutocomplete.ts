@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DEFAULT_CONFIG } from './constants';
 
 export interface UseAutocompleteParams<T = string> {
   fetchFn: (q: string, opts?: { signal?: AbortSignal }) => Promise<T[]> | Promise<any>;
+  selectionFn?: (selectedValue: string, opts?: { signal?: AbortSignal }) => Promise<T[]> | Promise<any>;
   debounceMs?: number;
   minChars?: number;
   maxCache?: number;
@@ -25,14 +27,16 @@ export interface UseAutocompleteReturn<T = string> {
     moveHighlight: (delta: number) => void;
     setHighlightIndex: (idx: number) => void;
     setSuggestions: (sugs: T[]) => void;
+    handleSelection: (value: string) => Promise<void>;
   };
 }
 
 export function useAutocomplete<T = string>({
   fetchFn,
-  debounceMs = 300,
-  minChars = 1,
-  maxCache = 50,
+  selectionFn,
+  debounceMs = DEFAULT_CONFIG.DEBOUNCE_MS,
+  minChars = DEFAULT_CONFIG.MIN_CHARS,
+  maxCache = DEFAULT_CONFIG.MAX_CACHE_SIZE,
 }: UseAutocompleteParams<T>): UseAutocompleteReturn<T> {
   const [input, setInput] = useState('');
   const [query, setQuery] = useState('');
@@ -44,7 +48,8 @@ export function useAutocomplete<T = string>({
 
   const debounceRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const cacheRef = useRef<Map<string, T[]>>(new Map());
+  const cacheRef = useRef<Map<string, T[]>>(new Map()); // keys stored lowercase for normalization
+  const lastSuggestionsSizeRef = useRef<number>(0);
 
   const clear = useCallback(() => {
     setInput('');
@@ -75,8 +80,9 @@ export function useAutocomplete<T = string>({
     const q = query.trim();
     if (!q) return;
 
-    if (cacheRef.current.has(q)) {
-      const data = cacheRef.current.get(q)!;
+    const key = q.toLowerCase();
+    if (cacheRef.current.has(key)) {
+      const data = cacheRef.current.get(key)!;
       setSuggestions(data);
       setNoResults(data.length === 0);
       return;
@@ -88,14 +94,14 @@ export function useAutocomplete<T = string>({
       setNoResults(false);
       const controller = new AbortController();
       abortRef.current = controller;
-      const maxAttempts = 2;
-      const backoffBase = 150;
+      const maxAttempts = DEFAULT_CONFIG.RETRY_ATTEMPTS;
+      const backoffBase = DEFAULT_CONFIG.BACKOFF_BASE_MS;
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
           const data = await fetchFn(q, { signal: controller.signal });
           if (controller.signal.aborted) return;
           const arr: T[] = Array.isArray(data) ? data as T[] : [];
-          cacheRef.current.set(q, arr);
+          cacheRef.current.set(key, arr);
           if (cacheRef.current.size > maxCache) {
             const first = cacheRef.current.keys().next();
             if (!first.done) {
@@ -119,8 +125,19 @@ export function useAutocomplete<T = string>({
       }
     }, debounceMs);
 
-    return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [query, debounceMs, fetchFn, maxCache]);
+
+  // Reset highlight if suggestions size changes and current highlight out of range
+  useEffect(() => {
+    if (highlight >= suggestions.length) {
+      setHighlight(-1);
+    }
+    lastSuggestionsSizeRef.current = suggestions.length;
+  }, [suggestions, highlight]);
 
   const moveHighlight = useCallback((delta: number) => {
     setHighlight(prev => {
@@ -137,8 +154,35 @@ export function useAutocomplete<T = string>({
     setHighlight(idx);
   }, [suggestions.length]);
 
+  const handleSelection = useCallback(async (value: string) => {
+    if (!selectionFn) return;
+    
+    setLoading(true);
+    setError(null);
+    setNoResults(false);
+    
+    const controller = new AbortController();
+    abortRef.current = controller;
+    
+    try {
+      const data = await selectionFn(value, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      
+      const arr: T[] = Array.isArray(data) ? data as T[] : [];
+      setSuggestions(arr);
+      setNoResults(arr.length === 0);
+      setLoading(false);
+      setHighlight(-1);
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      setError('Failed to fetch related suggestions');
+      setSuggestions([]);
+      setLoading(false);
+    }
+  }, [selectionFn]);
+
   return {
     state: { input, query, suggestions, loading, error, highlight, noResults },
-    actions: { updateInput, clear, moveHighlight, setHighlightIndex, setSuggestions },
+    actions: { updateInput, clear, moveHighlight, setHighlightIndex, setSuggestions, handleSelection },
   };
 }

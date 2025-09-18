@@ -1,12 +1,12 @@
 import './App.css';
 import './AutoComplete.css';
 import React from 'react';
-import AutoComplete from './AutoComplete';
+import SelectionDemo from './SelectionDemo';
 
 const App: React.FC = () => {
   return (
     <div className="App">
-      <AutoComplete />
+      <SelectionDemo />
     </div>
   );
 };
